@@ -117,10 +117,31 @@ The script will run through the following stages:
  
  ## Command-line arguments
  
+ ```
    --sandbox=testdomain.com  - will create www.example.com.testdomain.com.
    --create-zones            - will create Route53 zones if not found.
    --delete                  - delete removed clients. Use with caution!!
-   
+```
+
+# Scenarios
+
+Plase your client-config.yml inside a S3 bucket and create CloudPipeline which invokes this script.
+It will provision all required records for you.
+
+## Security
+
+Use provided .role to make sure script can only do what it's supposed.
+
+## Maintenance
+
+I've included a simple Maintenance service along with Dockerfile and CloudFormation file for ECS cluster which you can deploy. This service will simply show one static page with an image. You can use this as a template when creating your own services.
+
+## Redirect
+
+This service will perform redirect from `example.com` to `www.example.com`. I am also including it for your convenience along with Dockerfile and CloudFormation template.
+
+
+
  
  
  
