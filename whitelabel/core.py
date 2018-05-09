@@ -2,12 +2,13 @@
 
 # from . import helpers
 
-from __future__ import print_function
+from __future__ import print_function, division, unicode_literals
 
 from pprint import pprint
 import sys
 from ruamel.yaml import YAML
 from urllib.parse import urlparse
+import json
 import boto3
 
 
@@ -200,7 +201,7 @@ def get_expected_origin(domain, subdomain):
         # Create origin for S3
 
         origin['DomainName']=service_parsed.netloc+".s3.amazonaws.com"
-        origin['Id']='MyS3Origin'
+        origin['Id']='MyS3Origin2'
         origin['OriginPath'] = service_parsed.path
         origin['S3OriginConfig'] = {'OriginAccessIdentity': ''}
 
@@ -210,8 +211,19 @@ def get_expected_origin(domain, subdomain):
         origin['DomainName']=service_parsed.netloc+this.sandbox
         origin['Id']='MyOrigin'
         origin['CustomOriginConfig'] = {
+            'OriginKeepaliveTimeout': 5,
             'OriginProtocolPolicy': 'http-only',
-            'HTTPPort': 80
+            'HTTPPort': 80,
+            'HTTPSPort': 443,
+            "OriginSslProtocols": {
+                "Quantity": 2,
+                "Items": [
+                    "SSLv3",
+                    "TLSv1"
+                ]
+            },
+            "OriginReadTimeout": 30,
+            "OriginKeepaliveTimeout": 5
         }
 
         return origin
@@ -239,30 +251,50 @@ def validate_distributions(fix=False):
 
             existing = 0
 
-            origin = get_expected_origin(domain, subdomain)
+            desired_origin = get_expected_origin(domain, subdomain)
+
+            schema = urlparse(this.services[client['service']]).scheme
 
 
             for cfdns, cf in this.cfcache.items():
 
+
                 # Skip records that dont match
-                if cf['DomainNameSrc'] != fqdn:
+                if cf['Alias'] != fqdn:
                     continue
 
-                if cf['Status'] != 'Deployed':
-                    eprint("Found distribution but Status=%s\n" % cf['Status'])
-                    existing = -1
-                    break
-
-                exitsing+=1
+                existing +=1
 
                 # matching certificate found. Lets compare Origin with ExpectedOrigin
 
-                if origin != cf['Origin']:
-                    eprint(" Update-able distribution: %s -> %s -> %s\n" % (fqdn, cfdns, cf['DomainNameDns']))
-                    eprint("old: ", cf['Origin'])
-                    eprint("new: ", origin)
+                cf_new=cf['Origin'].copy()
+
+
+                dict_merge(cf_new, desired_origin) # mutate cf copy with desired origin
+
+                if cf_new != cf['Origin']:
+
+                    if cf['Status'] != 'Deployed':
+                        eprint("Found update-able distribution but cannot update, Status=%s\n" % cf['Status'])
+                        eprint("  %s -> %s -> %s\n" % (fqdn, cfdns, cf['DomainNameDst']))
+                        eprint("old: ", json.dumps(cf['Origin'], sort_keys=True), "\n")
+                        eprint("new: ", json.dumps(cf_new, sort_keys=True), "\n")
+
+                        existing = -1
+                        break
+
+
+
+                    eprint(" Update-able distribution: %s -> %s -> %s\n" % (fqdn, cfdns, cf['DomainNameDst']))
+                    eprint("old: ", json.dumps(cf['Origin'], sort_keys=True), "\n")
+                    eprint("new: ", json.dumps(cf_new, sort_keys=True), "\n")
 
                     if not fix: continue
+
+                    if schema == 's3': 
+                        create_distribution_s3(domain, subdomain, cf['Id'])
+                    else:
+                        create_distribution_custom(domain, subdomain, cf['Id'])
 
                     # TODO: update distribution here to match, but in case there are multiple distributions,
                     # delete them
@@ -282,14 +314,46 @@ def validate_distributions(fix=False):
             eprint("Creating new distribution %s -> %s\n" % (fqdn, this.services[client['service']] ))
 
 
-            if client['service'] != 'static': 
-                eprint("Not sure how to create distribution %s -> %s\n" % (fqdn, this.services[client['service']] ))
-                continue
+            if schema == 's3': 
+                create_distribution_s3(domain, subdomain)
+            else:
+                create_distribution_custom(domain, subdomain)
 
-            create_distribution_s3(domain, subdomain)
+def list_merge(existing, new):
 
+    if new == []: return new
 
-def create_distribution_s3(domain, subdomain):
+    if existing[0] == 'HEAD':
+        return new
+
+    for key, value in enumerate(new):
+
+        if type(value) is dict:
+            # get node or create one
+            existing[key] = dict_merge(existing[key], value)
+        elif type(value) is list:
+            existing[key] = list_merge(existing[key], value)
+        else:
+            existing[key] = value
+
+    return existing
+
+def dict_merge(existing, new):
+
+    # new is new dictionary to me added into existing
+    for key, value in new.items():
+
+        if type(value) is dict and key in existing:
+            # get node or create one
+            existing[key] = dict_merge(existing[key], value)
+        elif type(value) is list and key in existing:
+            existing[key] = list_merge(existing[key], value)
+        else:
+            existing[key] = value
+
+    return existing
+
+def create_distribution_s3(domain, subdomain, distribution_id=None):
     """
     Will create CloudFront distribution for a static site. Destination will be calculated
     according to the config.
@@ -297,25 +361,31 @@ def create_distribution_s3(domain, subdomain):
 
     fqdn = (subdomain+'.'+domain+this.sandbox_dot)
 
-    print(get_expected_origin(domain, subdomain))
-
     cf = boto3.client('cloudfront');
     DistributionConfig = { 
-            'CallerReference': 'cr%s' % hash(domain + '.' + subdomain),
             'Comment':"Generated for client %s by V3 (service: %s)" % (domain, subdomain),
             'Aliases':{ 'Items': [fqdn], 'Quantity':1 },
             'Origins':{ 'Items': [ get_expected_origin(domain, subdomain) ], 'Quantity':1 },
-            'Enabled':False,
+            'Enabled': True,
             'DefaultRootObject':"index.html",
             'PriceClass':'PriceClass_100',
             'DefaultCacheBehavior': {
-                'TargetOriginId': 'MyS3Origin',
+                'TargetOriginId': 'MyS3Origin2',
                 'TrustedSigners': {'Enabled': False, 'Quantity': 0},
                 'MinTTL': 0,
                 'ForwardedValues': { 
                     'QueryString': False,
+                    "Headers": {
+                        "Quantity": 0,
+                        'Items': []
+                    },
                     'Cookies': { 'Forward': 'none' },
                 },
+                'AllowedMethods': {
+                    'Quantity': 2,
+                    'Items': ['HEAD','GET'],
+                },
+                'Compress': True,
                 'ViewerProtocolPolicy': 'allow-all',
             },
             'Logging': {
@@ -326,30 +396,102 @@ def create_distribution_s3(domain, subdomain):
             }
         }
 
-    pprint(DistributionConfig)
+    if distribution_id:
 
-    """
-'Origins': {'Items': [{'CustomHeaders': {'Quantity': 0},
-                        'DomainName': 'ms-qa-static.s3.amazonaws.com',
-                        'Id': 'MyS3Origin',
-                        'OriginPath': '/www.romdev3.mymedsleuth.com',
-                        'S3OriginConfig': {'OriginAccessIdentity': ''}}],
-             'Quantity': 1}
 
-'Origins': {'Items': [{'CustomHeaders': {'Quantity': 0},
-                         'DomainName': 'ms-qa-static.s3.amazonaws.com',
-                         'Id': 'myS3Origin',
-                         'OriginPath': '/www.livingdonorvm.org',
-                         'S3OriginConfig': {'OriginAccessIdentity': ''}}],
-              'Quantity': 1},
-    """
-
-    res = cf.create_distribution(
-        DistributionConfig=DistributionConfig
-    )
+        response = cf.get_distribution_config(Id=distribution_id)
+        etag = response.get('ETag')
+        config = response.get('DistributionConfig')
+        config = dict_merge(config, DistributionConfig)
+        if 'CustomOriginConfig' in config['Origins']['Items'][0]: del config['Origins']['Items'][0]['CustomOriginConfig']
+        res = cf.update_distribution(
+            DistributionConfig=config,
+            Id=distribution_id,
+            IfMatch=etag
+        )
+    else:
+        DistributionConfig['CallerReference'] = 'cr%s' % hash(domain + '.' + subdomain)
+        res = cf.create_distribution(
+            DistributionConfig=DistributionConfig
+        )
 
     pprint(res)
-    sys.exit(1)
+
+
+
+def create_distribution_custom(domain, subdomain, distribution_id=None):
+    """
+    Will create CloudFront distribution for a http proxying. Destination will be calculated
+    according to the config.
+    """
+
+    fqdn = (subdomain+'.'+domain+this.sandbox_dot)
+
+    cf = boto3.client('cloudfront');
+    DistributionConfig = { 
+            #'CallerReference': 'cr%s' % hash(domain + '.' + subdomain),
+            'Comment':"Generated for client %s by V3 (service: %s)" % (domain, subdomain),
+            'Aliases':{ 'Items': [fqdn], 'Quantity':1 },
+            'Origins':{ 'Items': [ get_expected_origin(domain, subdomain) ], 'Quantity':1 },
+            'Enabled': True,
+            'DefaultRootObject':"index.html",
+            'PriceClass':'PriceClass_100',
+            'DefaultCacheBehavior': {
+                'TargetOriginId': 'MyOrigin',
+                'TrustedSigners': {'Enabled': False, 'Quantity': 0},
+                'MinTTL': 0,
+                'ForwardedValues': { 
+                    'Headers': {
+                        'Quantity': 1,
+                        'Items': ['*'],
+                    },
+                    'QueryString': True,
+                    'Cookies': { 'Forward': 'all' },
+                },
+                'AllowedMethods': {
+                    'Quantity': 7,
+                    'Items': ['HEAD','DELETE','POST','GET','OPTIONS','PUT','PATCH'],
+                },
+                'Compress': True,
+                'ViewerProtocolPolicy': 'redirect-to-https',
+            },
+            'Logging': {
+                'Enabled': True,
+                'Bucket': this.log_bucket,
+                'Prefix': "%s/" % fqdn,
+                'IncludeCookies': False,
+            }
+        }
+
+    if distribution_id:
+
+
+        response = cf.get_distribution_config(Id=distribution_id)
+        etag = response.get('ETag')
+        config = response.get('DistributionConfig')
+        config = dict_merge(config, DistributionConfig)
+
+        if 'S3OriginConfig' in config['Origins']['Items'][0]: del config['Origins']['Items'][0]['S3OriginConfig']
+        pprint(config['Origins']['Items'][0])
+
+        res = cf.update_distribution(
+            DistributionConfig=config,
+            Id=distribution_id,
+            IfMatch=etag
+        )
+    else:
+        DistributionConfig['CallerReference'] = 'cr%s' % hash(domain + '.' + subdomain)
+        res = cf.create_distribution(
+            DistributionConfig=DistributionConfig
+        )
+
+    pprint(res)
+
+
+
+
+
+
 
 
 
