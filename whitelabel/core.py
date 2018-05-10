@@ -638,12 +638,14 @@ def request_certificates():
 
             if arn is None:
                 has_all_certs = False
+                break
 
 
-        arn = get_cert_arn(domain, None)
+        if has_all_certs:
+            arn = get_cert_arn(domain, None)
 
-        if arn is None:
-                has_all_certs = False
+            if arn is None:
+                    has_all_certs = False
 
         if not has_all_certs:
 
@@ -656,6 +658,8 @@ def get_cert_arn(domain, subdomain):
 
 
     acm=boto3.client('acm')
+
+    fqdn=domain if subdomain is None else subdomain+'.'+domain
 
     # 1 best case scenario - we have $domain cert with *.$domain as additional name
     if domain in this.certs:
@@ -680,7 +684,7 @@ def get_cert_arn(domain, subdomain):
 
 
         # verify that certificate is good for us
-        if this.certs[domain]['Status'] == 'ISSUED':
+        if this.certs[domain]['Status'] == 'ISSUED' and subdomain is not None:
             if '*.'+domain in this.certs[domain]['SubjectAlternativeNames']:
                 # can use this ARN
                 print('%s.%s found wildcard %s' % (subdomain, domain, this.certs[domain]['CertificateArn']));
@@ -697,20 +701,93 @@ def get_cert_arn(domain, subdomain):
         # perhaps it's still pending
         if this.certs[domain]['Status'] == 'PENDING_VALIDATION':
             if '*.'+domain in this.certs[domain]['SubjectAlternativeNames']:
-                print('%s.%s wildcard in PENDING state %s' % (subdomain, domain, this.certs[domain]['CertificateArn']));
+                print('%s.%s wildcard in PENDING state %s. Trying to approve' % (subdomain, domain, this.certs[domain]['CertificateArn']));
 
-                # TODO: attempt to approve
+                approve_cert(domain)
+
+                return None
 
     if subdomain is not None and subdomain+'.'+domain in this.certs:
-        if this.certs[subdomain+'.'+domain]['Status'] == 'ISSUED':
-            return this.certs[subdomain+'.'+domain]['CertificateArn']
+        if this.certs[fqdn]['Status'] == 'ISSUED':
+            print('%s.%s subdomain found as individual cert %s' % (subdomain, domain, this.certs[fqdn]['CertificateArn']));
+            return this.certs[fqdn]['CertificateArn']
 
+    if subdomain is None and domain in this.certs:
+        if this.certs[domain]['Status'] == 'ISSUED':
+            print('%s found as individual cert %s' % (domain, this.certs[domain]['CertificateArn']));
+            return this.certs[domain]['CertificateArn']
 
-    failprint('No suitable certificate for %s.%s. Requesting.\n' % (subdomain,domain))
-
+    failprint('No suitable certificate for %s. Requesting.\n' % fqdn)
+    request_cert(domain)
 
     return None
 
+def approve_cert(domain):
+
+    if '_approved' in this.certs[domain]: 
+        print("Already approved cert for this domain")
+        return
+
+    if 'DomainValidationOptions' not in this.certs[domain]:
+        # retrieve cert data and populate subdomains
+        cert = acm.describe_certificate(
+            CertificateArn=this.certs[domain]['CertificateArn']
+        )
+        print("refetching")
+
+        this.certs[domain] = cert['Certificate']
+
+    val=this.certs[domain]['DomainValidationOptions'][0]
+    if 'ResourceRecord' not in val:
+        pprint(this.certs[domain])
+        failprint("ResourceRecord is not provided for certificate (%s). Maybe it must be verified through email?", this.certs[domain]['CertificateArn'])
+        return
+
+    r53=boto3.client('route53')
+
+    zid = r53.list_hosted_zones_by_name(
+        DNSName=domain,
+        MaxItems="1"
+    )['HostedZones'][0]['Id']
+
+    res = r53.change_resource_record_sets(
+        HostedZoneId=zid,
+        ChangeBatch={
+            'Changes': [ { 
+                'Action': 'UPSERT',
+                'ResourceRecordSet': {
+                    'Name': val['ResourceRecord']['Name'],
+                    'Type': val['ResourceRecord']['Type'],
+                    'TTL': 900,
+                    'ResourceRecords': [ {
+                        'Value': val['ResourceRecord']['Value']
+                    } ]
+                }
+            } ]
+        }
+    )
+
+    this.certs[domain]['_approved'] = True
+
+
+def request_cert(domain):
+
+    acm=boto3.client('acm')
+    res = acm.request_certificate(
+        DomainName=domain,
+        ValidationMethod='DNS',
+        SubjectAlternativeNames=[
+            '*.'+domain,
+        ],
+    )
+
+    cert = acm.describe_certificate(
+        CertificateArn=res['CertificateArn']
+    )
+
+    this.certs[domain] = cert['Certificate']
+    if cert['Certificate']['Status'] == 'PENDING_VALIDATION':
+        approve_cert(domain)
 
 def main():
     """huhh"""
@@ -730,12 +807,8 @@ def main():
         failprint('Problem in client-config.yml file\n')
         raise
 
-    # now 
-
-    request_certificates()
-
-
     update_route53_records()
+    request_certificates()
 
     build_distribution_cache()
 
