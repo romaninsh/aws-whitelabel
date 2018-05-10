@@ -11,6 +11,15 @@ from urllib.parse import urlparse
 import json
 import boto3
 
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
 this = sys.modules[__name__]
 
@@ -37,7 +46,10 @@ this.zonecache = {}
 this.log_bucket = "ms-qa-logs.s3.amazonaws.com"
 
 def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, end="", **kwargs)
+    print(bcolors.WARNING, *args, bcolors.ENDC, file=sys.stderr, end="", sep='', **kwargs)
+
+def failprint(*args, **kwargs):
+    print(bcolors.FAIL, *args, bcolors.ENDC, file=sys.stderr, end="", sep='', **kwargs)
 
 def die(*args, **kwargs):
     eprint(*args, **kwargs)
@@ -584,9 +596,15 @@ def main():
     """huhh"""
 
     # first discover service end-points
-    discover_services(read_yaml_config('service-config.yml')['ServiceConfig'])
+    try:
+        yaml=read_yaml_config('service-config.yml')
+        discover_services(yaml.get('ServiceConfig', yaml.get('serviceconfig')))
+    except TypeError:
+        failprint('Problem in service-config.yml file\n')
+        raise
 
-    discover_clients(read_yaml_config('client-config.yml')['ClientConfig'])
+    yaml=read_yaml_config('client-config.yml')
+    discover_clients(yaml.get('ClientConfig', yaml.get('clientconfig')))
 
     # now 
 

@@ -45,26 +45,26 @@ There are also some command-line options. It is recommended to run this script a
 By adding structure like this inside your `service-config.yml`:
  
 ``` yaml
-ServiceConfig:
- - Name: frontend-v2
-   Endpoint: frontend-v2.yourloadbalancer.com
+serviceconfig:
+ - name: frontend-v2
+   endpoint: frontend-v2.yourloadbalancer.com
    
- - Name: frontend-v3
-   Maintenance: true
-   Endpoint: frontend-v3.yourloadbalancer.com
+ - name: frontend-v3
+   maintenance: true
+   endpoint: frontend-v3.yourloadbalancer.com
     
- - Name: maintenance
-   Endpoint: maintenance.internaldomain.com
+ - name: maintenance
+   endpoint: maintenance.internaldomain.com
    
- - Name: redirect
-   Endpoint: redirect.internaldomain.com
+ - name: redirect
+   endpoint: redirect.internaldomain.com
 
- - Name: api
-   Lambda: lambda-name-abc
+ - name: api
+   lambda: lambda-name-abc
 
- - Name: static
-   Bucket: com.your.static-bucket
-   Folder: "static-sites/{$domain}" # can also use {$host}
+ - name: static
+   bucket: com.your.static-bucket
+   folder: "static-sites/{$domain}" # can also use {$host}
 ```
 
 The endpoint DNS names will not be exposed.
@@ -74,22 +74,22 @@ The endpoint DNS names will not be exposed.
 The structure of `client-config.yml`:
 
 ``` yaml
-ClientConfig:
- - Domain: example.com
-   Subdomains:
-    - Name: www
-      Service: fronend-v2
+clientconfig:
+ - domain: example.com
+   subdomains:
+    - name: www
+      service: fronend-v2
       
-    - Name: api
-      Service: api
+    - name: api
+      service: api
 
-- Domain: example2.com
-   Subdomains:
-     - Name: www
-       Service: static  # files from s3://com.your.static-bucket/static-sites/example2.com/
+- domain: example2.com
+   subdomains:
+     - name: www
+       service: static  # files from s3://com.your.static-bucket/static-sites/example2.com/
 
-     - Name: www2
-       Service: frontend-v3  # will actually show maintenance page. 
+     - name: www2
+       service: frontend-v3  # will actually show maintenance page. 
        
 ```
 
