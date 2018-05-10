@@ -29,6 +29,10 @@ this.services = {}
 # Will be set to client Yaml
 this.clients = {}
 
+this.cfcache = {}
+
+this.cflink = {}
+
 # This will be set to DNS name, which we will use as CNAME
 # destination 
 this.maintenance_dns = "maintenance.romdev4.infrastructure.mymedsleuth.com"
@@ -44,6 +48,8 @@ this.sandbox_zone = None
 this.zonecache = {}
 
 this.certs = {}
+
+this.acm_arns = {}
 
 this.log_bucket = "ms-qa-logs.s3.amazonaws.com"
 
@@ -193,6 +199,8 @@ def build_distribution_cache():
             'Origin': res1['Origins']['Items'][0],
             'ViewerCertificate': res1['ViewerCertificate'],
         }
+
+        this.cflink[res1['Aliases']['Items'][0]] = res1['DomainName']
 
 def get_expected_origin(domain, subdomain):
     """
@@ -402,6 +410,13 @@ def create_distribution_s3(domain, subdomain, distribution_id=None):
             }
         }
 
+    # if ssl
+    DistributionConfig['ViewerCertificate']={
+        'ACMCertificateArn': this.acm_arns[fqdn],
+        'CloudFrontDefaultCertificate': False,
+        'SSLSupportMethod': 'sni-only',
+    }
+
     if distribution_id:
 
 
@@ -465,6 +480,13 @@ def create_distribution_custom(domain, subdomain, distribution_id=None):
                 'IncludeCookies': False,
             }
         }
+
+    # if ssl
+    DistributionConfig['ViewerCertificate']={
+        'ACMCertificateArn': this.acm_arns[fqdn],
+        'CloudFrontDefaultCertificate': False,
+        'SSLSupportMethod': 'sni-only',
+    }
 
     if distribution_id:
 
@@ -562,7 +584,36 @@ def update_route53_records():
             nn = subdomain+'.'+domain+'.'+this.sandbox
 
             ## see if record exists, and we have maintenance dns
-            if nn not in this.zonecache[zid]:
+            fqdn=subdomain+'.'+domain
+
+            if fqdn in this.cflink and this.zonecache[zid][nn]['Type'] == 'CNAME':
+                # Distribution exists!
+                eprint("  %s.%s -> cloudfront %s\n" % (domain, subdomain, this.cflink[fqdn] ))
+                res = r53.change_resource_record_sets(
+                    HostedZoneId=zid,
+                    ChangeBatch={
+                        'Changes': [ 
+                        { 
+                            'Action': 'DELETE',
+                            'ResourceRecordSet': this.zonecache[zid][nn]
+                        } ,
+                        { 
+                            'Action': 'CREATE',
+                            'ResourceRecordSet': {
+                                'Name': nn,
+                                'Type': 'A',
+                                'AliasTarget': {
+                                    'HostedZoneId': 'Z2FDTNDATAQYW2',
+                                    'DNSName': this.cflink[fqdn],
+                                    'EvaluateTargetHealth': False,
+                                } 
+                            }
+                        } ]
+                    }
+                )
+
+
+            elif nn not in this.zonecache[zid]:
                 # Create maintenance record (temporarily)
 
                 # TODO - if distribution exists for this domain and is configured correctly, we should update DNS
@@ -592,7 +643,6 @@ def update_route53_records():
                         }
                     )
 
-    
     
     #.describe_load_balancers(
     #client.list_hosted_zones_by_name
@@ -640,12 +690,16 @@ def request_certificates():
                 has_all_certs = False
                 break
 
+            this.acm_arns[subdomain+'.'+domain]=arn
+
 
         if has_all_certs:
             arn = get_cert_arn(domain, None)
 
             if arn is None:
-                    has_all_certs = False
+                has_all_certs = False
+            else:
+                this.acm_arns[domain]=arn
 
         if not has_all_certs:
 
@@ -807,13 +861,18 @@ def main():
         failprint('Problem in client-config.yml file\n')
         raise
 
-    update_route53_records()
-    request_certificates()
-
     build_distribution_cache()
+
+    update_route53_records()
+
+    request_certificates()
 
     validate_distributions(True)
 
+    #update_route53_records()
+
     #discover_services(read_services_config('service-config.yml'))
 
+
+    eprint('ALL DONE\n')
 
