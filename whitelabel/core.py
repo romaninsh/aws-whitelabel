@@ -210,6 +210,7 @@ def get_expected_origin(domain, subdomain):
     if service_parsed.scheme == 'http' or service_parsed.scheme == 'https':
         origin['DomainName']=service_parsed.netloc+this.sandbox
         origin['Id']='MyOrigin'
+        origin['OriginPath'] = ''
         origin['CustomOriginConfig'] = {
             'OriginKeepaliveTimeout': 5,
             'OriginProtocolPolicy': 'http-only',
@@ -285,11 +286,12 @@ def validate_distributions(fix=False):
 
 
 
-                    eprint(" Update-able distribution: %s -> %s -> %s\n" % (fqdn, cfdns, cf['DomainNameDst']))
-                    eprint("old: ", json.dumps(cf['Origin'], sort_keys=True), "\n")
-                    eprint("new: ", json.dumps(cf_new, sort_keys=True), "\n")
+                    #eprint("old: ", json.dumps(cf['Origin'], sort_keys=True), "\n")
+                    #eprint("new: ", json.dumps(cf_new, sort_keys=True), "\n")
 
                     if not fix: continue
+
+                    eprint("Updating distribution: %s -> %s -> %s\n" % (fqdn, cfdns, cf['DomainNameDst']))
 
                     if schema == 's3': 
                         create_distribution_s3(domain, subdomain, cf['Id'])
@@ -321,22 +323,10 @@ def validate_distributions(fix=False):
 
 def list_merge(existing, new):
 
-    if new == []: return new
+    if len(existing) == 1 and len(new) == 1 and type(existing[0]) is dict and type(new[0]) is dict:
+        return [dict_merge(existing[0], new[0])]
 
-    if existing[0] == 'HEAD':
-        return new
-
-    for key, value in enumerate(new):
-
-        if type(value) is dict:
-            # get node or create one
-            existing[key] = dict_merge(existing[key], value)
-        elif type(value) is list:
-            existing[key] = list_merge(existing[key], value)
-        else:
-            existing[key] = value
-
-    return existing
+    return new
 
 def dict_merge(existing, new):
 
@@ -415,9 +405,6 @@ def create_distribution_s3(domain, subdomain, distribution_id=None):
             DistributionConfig=DistributionConfig
         )
 
-    pprint(res)
-
-
 
 def create_distribution_custom(domain, subdomain, distribution_id=None):
     """
@@ -465,14 +452,12 @@ def create_distribution_custom(domain, subdomain, distribution_id=None):
 
     if distribution_id:
 
-
         response = cf.get_distribution_config(Id=distribution_id)
         etag = response.get('ETag')
         config = response.get('DistributionConfig')
         config = dict_merge(config, DistributionConfig)
 
         if 'S3OriginConfig' in config['Origins']['Items'][0]: del config['Origins']['Items'][0]['S3OriginConfig']
-        pprint(config['Origins']['Items'][0])
 
         res = cf.update_distribution(
             DistributionConfig=config,
@@ -484,14 +469,6 @@ def create_distribution_custom(domain, subdomain, distribution_id=None):
         res = cf.create_distribution(
             DistributionConfig=DistributionConfig
         )
-
-    pprint(res)
-
-
-
-
-
-
 
 
 
