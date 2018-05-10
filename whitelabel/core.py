@@ -94,7 +94,7 @@ def discover_services(defs):
 
 
             l = l['Stacks'][0]['Outputs']
-            url = ([item for item in l if item['OutputKey'] == 'ServiceEndpoint'][0]['OutputValue'])+"/"+service['function']
+            url = ([item for item in l if item['OutputKey'] == 'ServiceEndpoint'][0]['OutputValue'])
 
             this.services[service['name']] = url
 
@@ -232,7 +232,7 @@ def get_expected_origin(domain, subdomain):
     if service_parsed.scheme == 'http' or service_parsed.scheme == 'https':
         origin['DomainName']=service_parsed.netloc+this.sandbox
         origin['Id']='MyOrigin'
-        origin['OriginPath'] = ''
+        origin['OriginPath'] = service_parsed.path
         origin['CustomOriginConfig'] = {
             'OriginKeepaliveTimeout': 5,
             'OriginProtocolPolicy': 'http-only',
@@ -586,29 +586,42 @@ def update_route53_records():
             ## see if record exists, and we have maintenance dns
             fqdn=subdomain+'.'+domain
 
-            if fqdn in this.cflink and this.zonecache[zid][nn]['Type'] == 'CNAME':
+            if fqdn in this.cflink:
+
+
+
+                actions = []
+                if nn in this.zonecache[zid]:
+
+                    if this.zonecache[zid][nn]['Type'] == 'A' and  \
+                            'AliasTarget' in this.zonecache[zid][nn] and \
+                            this.zonecache[zid][nn]['AliasTarget']['DNSName'] == this.cflink[fqdn]+'.':
+                                continue
+
+                    actions.append({ 
+                        'Action': 'DELETE',
+                        'ResourceRecordSet': this.zonecache[zid][nn]
+                    })
+
+                actions.append({ 
+                    'Action': 'CREATE',
+                    'ResourceRecordSet': {
+                        'Name': nn,
+                        'Type': 'A',
+                        'AliasTarget': {
+                            'HostedZoneId': 'Z2FDTNDATAQYW2',
+                            'DNSName': this.cflink[fqdn]+'.',
+                            'EvaluateTargetHealth': False,
+                        } 
+                    }
+                })
+
                 # Distribution exists!
-                eprint("  %s.%s -> cloudfront %s\n" % (domain, subdomain, this.cflink[fqdn] ))
+                eprint("  %s.%s -> cloudfront %s\n" % (subdomain, domain, this.cflink[fqdn] ))
                 res = r53.change_resource_record_sets(
                     HostedZoneId=zid,
                     ChangeBatch={
-                        'Changes': [ 
-                        { 
-                            'Action': 'DELETE',
-                            'ResourceRecordSet': this.zonecache[zid][nn]
-                        } ,
-                        { 
-                            'Action': 'CREATE',
-                            'ResourceRecordSet': {
-                                'Name': nn,
-                                'Type': 'A',
-                                'AliasTarget': {
-                                    'HostedZoneId': 'Z2FDTNDATAQYW2',
-                                    'DNSName': this.cflink[fqdn],
-                                    'EvaluateTargetHealth': False,
-                                } 
-                            }
-                        } ]
+                        'Changes': actions
                     }
                 )
 
@@ -623,7 +636,7 @@ def update_route53_records():
 
                 if this.maintenance_dns:
 
-                    eprint("  %s.%s -> maintenance (while cloudfront is being set-up)\n" % (domain, subdomain ))
+                    eprint("  %s.%s -> maintenance (while cloudfront is being set-up)\n" % (subdomain, domain ))
 
 
                     res = r53.change_resource_record_sets(
@@ -634,7 +647,7 @@ def update_route53_records():
                                 'ResourceRecordSet': {
                                     'Name': nn,
                                     'Type': 'CNAME',
-                                    'TTL': 900,
+                                    'TTL': 300,
                                     'ResourceRecords': [ {
                                         'Value': this.maintenance_dns
                                     } ]
@@ -812,7 +825,7 @@ def approve_cert(domain):
                 'ResourceRecordSet': {
                     'Name': val['ResourceRecord']['Name'],
                     'Type': val['ResourceRecord']['Type'],
-                    'TTL': 900,
+                    'TTL': 300,
                     'ResourceRecords': [ {
                         'Value': val['ResourceRecord']['Value']
                     } ]
