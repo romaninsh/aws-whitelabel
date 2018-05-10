@@ -43,16 +43,18 @@ this.sandbox_zone = None
 
 this.zonecache = {}
 
+this.certs = {}
+
 this.log_bucket = "ms-qa-logs.s3.amazonaws.com"
 
 def eprint(*args, **kwargs):
-    print(bcolors.WARNING, *args, bcolors.ENDC, file=sys.stderr, end="", sep='', **kwargs)
+    print(bcolors.WARNING, *args, bcolors.ENDC, end="", sep='', **kwargs)
 
 def failprint(*args, **kwargs):
     print(bcolors.FAIL, *args, bcolors.ENDC, file=sys.stderr, end="", sep='', **kwargs)
 
 def die(*args, **kwargs):
-    eprint(*args, **kwargs)
+    failprint(*args, **kwargs)
     sys.exit(2)
 
 def read_yaml_config(f):
@@ -252,6 +254,8 @@ def validate_distributions(fix=False):
     """
 
     for domain in this.clients:
+
+        if this.clients[domain] is None: continue
 
         # TODO - if delete, then find all matching distributions and schedule them
         # for deletion
@@ -526,6 +530,8 @@ def update_route53_records():
     r53 = boto3.client('route53')
 
     for domain in this.clients:
+        if this.clients[domain] is None: continue
+
         eprint("--[ Processing DNS for %s ]---------------\n" % domain)
 
 
@@ -591,6 +597,120 @@ def update_route53_records():
     #.describe_load_balancers(
     #client.list_hosted_zones_by_name
 
+def request_certificates():
+    """
+    For all the domains, this will request certificates. Each domain, one certificate.
+
+    example.com will request certificate for example.com with additional name *.example.com and DNS validation.
+
+    The certificate is then usable across all distributions.
+    """
+
+    # Get all existing certificates first
+    acm=boto3.client('acm')
+    eprint("==[ Fetching ACM data ]==============\n")
+
+    valid_certs = acm.list_certificates(CertificateStatuses=['ISSUED'])['CertificateSummaryList']
+    for cert in valid_certs:
+        this.certs[cert['DomainName']] = {
+            'CertificateArn': cert['CertificateArn'],
+            'Status': 'ISSUED'
+        }
+
+    pending_certs = acm.list_certificates(CertificateStatuses=['PENDING_VALIDATION'])['CertificateSummaryList']
+    for cert in pending_certs:
+        this.certs[cert['DomainName']] = {
+            'CertificateArn': cert['CertificateArn'],
+            'Status': 'PENDING_VALIDATION'
+        }
+
+    # See if we need to any new certificates for the clients
+    for domain in this.clients:
+
+        # Start by assuming that no validation is needed
+        has_all_certs = True
+
+        # next go through subdomains, check if we are missing certificates
+        for subdomain in this.clients[domain]:
+            # see if there is certificate for that
+            # will request certificate or approve as necessary
+            arn = get_cert_arn(domain, subdomain)
+
+            if arn is None:
+                has_all_certs = False
+
+
+        arn = get_cert_arn(domain, None)
+
+        if arn is None:
+                has_all_certs = False
+
+        if not has_all_certs:
+
+            failprint("%s missing SSL certs. Maybe next time\n" % domain)
+            this.clients[domain]=None
+
+
+def get_cert_arn(domain, subdomain):
+    # attempt to find good ARN for this subdomain
+
+
+    acm=boto3.client('acm')
+
+    # 1 best case scenario - we have $domain cert with *.$domain as additional name
+    if domain in this.certs:
+
+
+        # verify that certificate is retrieved
+        if 'SubjectAlternativeNames' not in this.certs[domain]:
+            # retrieve cert data and populate subdomains
+            cert = acm.describe_certificate(
+                CertificateArn=this.certs[domain]['CertificateArn']
+            )
+
+            this.certs[domain] = cert['Certificate']
+
+            """
+            cert_subdomains = {}
+            for dom in cert['Certificate']['DomainValidationOptions']:
+                cert_subdomains[dom['DomainName']] = dom['ValidationStatus']
+
+            this.certs[domain]['subdomains'] = cert_subdomains
+            """
+
+
+        # verify that certificate is good for us
+        if this.certs[domain]['Status'] == 'ISSUED':
+            if '*.'+domain in this.certs[domain]['SubjectAlternativeNames']:
+                # can use this ARN
+                print('%s.%s found wildcard %s' % (subdomain, domain, this.certs[domain]['CertificateArn']));
+
+                return this.certs[domain]['CertificateArn']
+
+            if subdomain+'.'+domain in this.certs[domain]['SubjectAlternativeNames']:
+                # can use this ARN
+                print('%s.%s found as alternative name for %s' % (subdomain, domain, this.certs[domain]['CertificateArn']));
+
+                return this.certs[domain]['CertificateArn']
+
+
+        # perhaps it's still pending
+        if this.certs[domain]['Status'] == 'PENDING_VALIDATION':
+            if '*.'+domain in this.certs[domain]['SubjectAlternativeNames']:
+                print('%s.%s wildcard in PENDING state %s' % (subdomain, domain, this.certs[domain]['CertificateArn']));
+
+                # TODO: attempt to approve
+
+    if subdomain is not None and subdomain+'.'+domain in this.certs:
+        if this.certs[subdomain+'.'+domain]['Status'] == 'ISSUED':
+            return this.certs[subdomain+'.'+domain]['CertificateArn']
+
+
+    failprint('No suitable certificate for %s.%s. Requesting.\n' % (subdomain,domain))
+
+
+    return None
+
 
 def main():
     """huhh"""
@@ -603,10 +723,16 @@ def main():
         failprint('Problem in service-config.yml file\n')
         raise
 
-    yaml=read_yaml_config('client-config.yml')
-    discover_clients(yaml.get('ClientConfig', yaml.get('clientconfig')))
+    try:
+        yaml=read_yaml_config('client-config.yml')
+        discover_clients(yaml.get('ClientConfig', yaml.get('clientconfig')))
+    except TypeError:
+        failprint('Problem in client-config.yml file\n')
+        raise
 
     # now 
+
+    request_certificates()
 
 
     update_route53_records()
