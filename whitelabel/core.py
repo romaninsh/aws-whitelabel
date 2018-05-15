@@ -170,17 +170,14 @@ def build_distribution_cache():
     eprint("==[ Reading distributions ]==============\n")
 
     cf = boto3.client('cloudfront');
-    res = cf.list_distributions(
-
-    )
-    if res['DistributionList']['IsTruncated']:
-        die("Too many distributions. Please implement paginator!")
-
-    res = res['DistributionList']['Items']
-
-
+    pag = cf.get_paginator('list_distributions').paginate()
     this.cfcache = {}
-    for res1 in res:
+
+    for page in pag:
+      res = page['DistributionList']['Items']
+
+
+      for res1 in res:
 
         if 'Items' not in res1['Aliases']:
             continue
@@ -208,11 +205,14 @@ def get_expected_origin(domain, subdomain):
     look like
     """
 
-    c = this.clients[domain][subdomain]
+    if subdomain is False: 
+        service=this.services['redirect']
+    else:
+        c = this.clients[domain][subdomain]
 
-    service = this.services[c['service']]
+        service = this.services[c['service']]
 
-    service = service.replace('{$domain}', domain).replace('{$subdomain}', subdomain)
+        service = service.replace('{$domain}', domain).replace('{$subdomain}', subdomain)
 
     service_parsed = urlparse(service)
 
@@ -270,9 +270,15 @@ def validate_distributions(fix=False):
 
         eprint("--[ Validating Distributions for: %s ]---------------\n" % domain)
 
-        for subdomain, client in this.clients[domain].items():
+        subdomains=list(this.clients[domain].items())
 
-            fqdn = subdomain + "." + domain
+        if 'www' in this.clients[domain] and 'redirect' in this.services:
+            eprint("Found subdomain 'www', will also create 'redirect' to it from %s\n" % domain);
+            subdomains.append([False, {'service': 'redirect'}])
+
+        for subdomain, client in subdomains:
+
+            fqdn = subdomain + "." + domain if subdomain is not False else domain
 
             existing = 0
 
@@ -373,11 +379,11 @@ def create_distribution_s3(domain, subdomain, distribution_id=None):
     according to the config.
     """
 
-    fqdn = (subdomain+'.'+domain+this.sandbox_dot)
+    fqdn = (subdomain+'.'+domain+this.sandbox_dot) if subdomain is not False else domain+sandbox_dot
 
     cf = boto3.client('cloudfront');
     DistributionConfig = { 
-            'Comment':"Generated for client %s by V3 (service: %s)" % (domain, subdomain),
+            'Comment':"Generated for client %s by V3 (service: %s)" % (domain, subdomain if not False else '_redirect'),
             'Aliases':{ 'Items': [fqdn], 'Quantity':1 },
             'Origins':{ 'Items': [ get_expected_origin(domain, subdomain) ], 'Quantity':1 },
             'Enabled': True,
@@ -431,7 +437,7 @@ def create_distribution_s3(domain, subdomain, distribution_id=None):
             IfMatch=etag
         )
     else:
-        DistributionConfig['CallerReference'] = 'cr%s' % hash(domain + '.' + subdomain)
+        DistributionConfig['CallerReference'] = 'cr%s' % hash(domain + '.' + (subdomain or ""))
         res = cf.create_distribution(
             DistributionConfig=DistributionConfig
         )
@@ -443,12 +449,12 @@ def create_distribution_custom(domain, subdomain, distribution_id=None):
     according to the config.
     """
 
-    fqdn = (subdomain+'.'+domain+this.sandbox_dot)
+    fqdn = (subdomain+'.'+domain+this.sandbox_dot) if subdomain is not False else domain+sandbox_dot
 
     cf = boto3.client('cloudfront');
     DistributionConfig = { 
             #'CallerReference': 'cr%s' % hash(domain + '.' + subdomain),
-            'Comment':"Generated for client %s by V3 (service: %s)" % (domain, subdomain),
+            'Comment':"Generated for client %s by V3 (service: %s)" % (domain, subdomain if not False else '_redirect'),
             'Aliases':{ 'Items': [fqdn], 'Quantity':1 },
             'Origins':{ 'Items': [ get_expected_origin(domain, subdomain) ], 'Quantity':1 },
             'Enabled': True,
@@ -503,7 +509,7 @@ def create_distribution_custom(domain, subdomain, distribution_id=None):
             IfMatch=etag
         )
     else:
-        DistributionConfig['CallerReference'] = 'cr%s' % hash(domain + '.' + subdomain)
+        DistributionConfig['CallerReference'] = 'cr%s' % hash(domain + '.' + (subdomain or ""))
         res = cf.create_distribution(
             DistributionConfig=DistributionConfig
         )
