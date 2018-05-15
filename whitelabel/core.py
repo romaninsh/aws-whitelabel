@@ -273,7 +273,7 @@ def validate_distributions(fix=False):
         subdomains=list(this.clients[domain].items())
 
         if 'www' in this.clients[domain] and 'redirect' in this.services:
-            eprint("Found subdomain 'www', will also create 'redirect' to it from %s\n" % domain);
+            print("Found subdomain 'www', will also create 'redirect' to it from %s" % domain);
             subdomains.append([False, {'service': 'redirect'}])
 
         for subdomain, client in subdomains:
@@ -458,7 +458,7 @@ def create_distribution_custom(domain, subdomain, distribution_id=None):
             'Aliases':{ 'Items': [fqdn], 'Quantity':1 },
             'Origins':{ 'Items': [ get_expected_origin(domain, subdomain) ], 'Quantity':1 },
             'Enabled': True,
-            'DefaultRootObject':"index.html",
+            'DefaultRootObject': "",
             'PriceClass':'PriceClass_100',
             'DefaultCacheBehavior': {
                 'TargetOriginId': 'MyOrigin',
@@ -579,18 +579,24 @@ def update_route53_records():
             this.zonecache[zid] = {}
             for r in recs:
                 n = r['Name']
+                if (r['Type'] not in ['A', 'CNAME']): continue
                 this.zonecache[zid][r['Name']] = r
 
 
+        subdomains=list(this.clients[domain].items())
 
-        for subdomain in this.clients[domain]:
+        if 'www' in this.clients[domain] and 'redirect' in this.services:
+            print("Found subdomain 'www', will also create DNS @ for 'redirect' on %s" % domain);
+            subdomains.append([False, {'service': 'redirect'}])
+
+        for subdomain, cl in subdomains:
 
             name = subdomain
 
-            nn = subdomain+'.'+domain+'.'+this.sandbox
+            nn = subdomain+'.'+domain+'.'+this.sandbox if subdomain is not False else domain+'.'+this.sandbox
 
             ## see if record exists, and we have maintenance dns
-            fqdn=subdomain+'.'+domain
+            fqdn=subdomain+'.'+domain if subdomain is not False else domain
 
             if fqdn in this.cflink:
 
@@ -599,10 +605,14 @@ def update_route53_records():
                 actions = []
                 if nn in this.zonecache[zid]:
 
+
                     if this.zonecache[zid][nn]['Type'] == 'A' and  \
                             'AliasTarget' in this.zonecache[zid][nn] and \
                             this.zonecache[zid][nn]['AliasTarget']['DNSName'] == this.cflink[fqdn]+'.':
                                 continue
+
+                    print ("EXISTS\n")
+                    print (this.zonecache[zid][nn])
 
                     actions.append({ 
                         'Action': 'DELETE',
@@ -623,7 +633,7 @@ def update_route53_records():
                 })
 
                 # Distribution exists!
-                eprint("  %s.%s -> cloudfront %s\n" % (subdomain, domain, this.cflink[fqdn] ))
+                eprint("  %s -> cloudfront %s\n" % (fqdn, this.cflink[fqdn] ))
                 res = r53.change_resource_record_sets(
                     HostedZoneId=zid,
                     ChangeBatch={
@@ -642,7 +652,7 @@ def update_route53_records():
 
                 if this.maintenance_dns:
 
-                    eprint("  %s.%s -> maintenance (while cloudfront is being set-up)\n" % (subdomain, domain ))
+                    eprint("  %s -> maintenance (while cloudfront is being set-up)\n" % (fqdn ))
 
 
                     res = r53.change_resource_record_sets(
