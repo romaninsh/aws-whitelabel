@@ -96,7 +96,7 @@ def discover_services(defs):
             l = l['Stacks'][0]['Outputs']
             url = ([item for item in l if item['OutputKey'] == 'ServiceEndpoint'][0]['OutputValue'])
 
-            this.services[service['name']] = url
+            this.services[service['name']] = {'url': url, 'type':'api'}
 
 
             eprint("%s\n" % url)
@@ -281,6 +281,9 @@ def validate_distributions(fix=False):
             fqdn = subdomain + "." + domain if subdomain is not False else domain
 
             existing = 0
+
+            # skip
+            if 'type' in this.services[client['service']]: continue
 
             desired_origin = get_expected_origin(domain, subdomain)
 
@@ -686,7 +689,7 @@ def request_certificates():
     """
 
     # Get all existing certificates first
-    acm=boto3.client('acm')
+    acm=boto3.client('acm', region_name='us-east-1')
     eprint("==[ Fetching ACM data ]==============\n")
 
     valid_certs = acm.list_certificates(CertificateStatuses=['ISSUED'])['CertificateSummaryList']
@@ -740,7 +743,7 @@ def get_cert_arn(domain, subdomain):
     # attempt to find good ARN for this subdomain
 
 
-    acm=boto3.client('acm')
+    acm=boto3.client('acm', region_name='us-east-1')
 
     fqdn=domain if subdomain is None else subdomain+'.'+domain
 
@@ -872,6 +875,85 @@ def request_cert(domain):
     if cert['Certificate']['Status'] == 'PENDING_VALIDATION':
         approve_cert(domain)
 
+def fullfill_api_gateways():
+
+    """
+    Go through API gateway setup, add missing domains and set up assotiations between
+    them and correct stage of the API
+
+    E.G. if you are deploying infra "ms-qa" and wish to use domain api.example.com then
+    this domain will be registered and association will be set up to
+    https://api-id.execute-api.region.amazonaws.com/msqa
+    """
+
+    eprint("==[ Setting up gateways ]==============\n")
+
+    apigw = boto3.client('apigateway');
+
+
+    for domain in this.clients:
+
+        if this.clients[domain] is None: continue
+
+        # TODO - if delete, then find all matching distributions and schedule them
+        # for deletion
+
+        subdomains=list(this.clients[domain].items())
+
+        for subdomain, client in subdomains:
+
+            fqdn = subdomain + "." + domain if subdomain is not False else domain
+
+            existing = 0
+
+            # skip
+            if 'type' not in this.services[client['service']]: continue
+
+            url = urlparse(this.services[client['service']]['url'])
+
+            apiid = url.netloc.split('.')[0]
+            stage = url.path.split('/')[1]
+
+            # lookup if this domain exists
+
+            eprint("Checking API association for %s.. " % fqdn);
+
+            try:
+                res = apigw.get_domain_name(domainName=fqdn);
+                eprint('exists\n')
+            except:
+                eprint('CREATING.. ')
+
+                try:
+                    res = apigw.create_domain_name(
+                        domainName=fqdn,
+                        certificateArn = this.acm_arns[fqdn],
+                        endpointConfiguration={
+                            'types': [
+                                'EDGE',
+                            ]
+                        }
+                    )
+
+
+                    apigw.create_base_path_mapping(
+                        domainName=fqdn,
+                        basePath='',
+                        restApiId=apiid,
+                        stage=stage
+                    )
+                    eprint('OK\n')
+                except:
+                    failprint('ERROR.. \n')
+
+                    eprint('Distribution or DNS record may be interfering with API gateway.. ')
+                    eprint('Delete domain in Route53 manually: %s' % fqdn)
+
+
+            this.cflink[fqdn] = res['distributionDomainName']
+
+
+
 def main():
     """huhh"""
 
@@ -892,11 +974,15 @@ def main():
 
     build_distribution_cache()
 
-    update_route53_records()
 
     request_certificates()
 
+    fullfill_api_gateways()
+
+    update_route53_records()
+
     validate_distributions(True)
+
 
     #update_route53_records()
 
