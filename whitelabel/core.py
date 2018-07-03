@@ -831,10 +831,18 @@ def approve_cert(domain):
 
     r53=boto3.client('route53')
 
+    pprint(domain)
+
     zid = r53.list_hosted_zones_by_name(
         DNSName=domain,
         MaxItems="1"
-    )['HostedZones'][0]['Id']
+    )['HostedZones'][0]
+
+    if zid['Name'][:-1] != domain:
+        die ("Zone for domain %s is not in Route53\n" % domain)
+    
+    
+    zid = zid['Id']
 
     res = r53.change_resource_record_sets(
         HostedZoneId=zid,
