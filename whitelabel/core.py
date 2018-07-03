@@ -831,8 +831,6 @@ def approve_cert(domain):
 
     r53=boto3.client('route53')
 
-    pprint(domain)
-
     zid = r53.list_hosted_zones_by_name(
         DNSName=domain,
         MaxItems="1"
