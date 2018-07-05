@@ -51,7 +51,7 @@ this.certs = {}
 
 this.acm_arns = {}
 
-this.log_bucket = "ms-qa-logs.s3.amazonaws.com"
+this.log_bucket = os.environ['LOG_BUCKET'] #"ms-qa-logs.s3.amazonaws.com"
 
 def eprint(*args, **kwargs):
     print(bcolors.WARNING, *args, bcolors.ENDC, end="", sep='', **kwargs)
