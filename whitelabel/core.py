@@ -6,6 +6,7 @@ from __future__ import print_function, division, unicode_literals
 
 from pprint import pprint
 import sys
+import os
 from ruamel.yaml import YAML
 from urllib.parse import urlparse
 import json
