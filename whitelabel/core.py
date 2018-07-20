@@ -53,6 +53,9 @@ this.certs = {}
 this.acm_arns = {}
 
 this.log_bucket = os.environ['LOG_BUCKET']+".s3.amazonaws.com"
+
+this.dry_run = 'DRY_RUN' in os.environ and os.environ['DRY_RUN']
+
 #"ms-qa-logs.s3.amazonaws.com"
 
 def eprint(*args, **kwargs):
@@ -255,7 +258,7 @@ def get_expected_origin(domain, subdomain):
 
     die("Don't know how to convert %s to Origin config" % service)
 
-def validate_distributions(fix=False):
+def validate_distributions():
 
     """
     Will go through client configuration, and verify if existing distribution (in cache)
@@ -324,7 +327,9 @@ def validate_distributions(fix=False):
                     #eprint("old: ", json.dumps(cf['Origin'], sort_keys=True), "\n")
                     #eprint("new: ", json.dumps(cf_new, sort_keys=True), "\n")
 
-                    if not fix: continue
+                    if this.dry_run: 
+                        eprint("DRY_RUN: Planning to update distribution %s -> %s -> %s\n" % (fqdn, cfdns, cf['DomainNameDst'] ))
+                        continue
 
                     eprint("Updating distribution: %s -> %s -> %s\n" % (fqdn, cfdns, cf['DomainNameDst']))
 
@@ -344,8 +349,8 @@ def validate_distributions(fix=False):
             # If some suitable records were found, GOOD!
             if existing: continue
 
-            if not fix: 
-                eprint("Missing distribution %s -> %s\n" % (fqdn, this.services[client['service']] ))
+            if this.dry_run: 
+                eprint("DRY_RUN: Planning to create a new distribution %s -> %s\n" % (fqdn, this.services[client['service']] ))
                 continue
 
             eprint("Creating new distribution %s -> %s\n" % (fqdn, this.services[client['service']] ))
@@ -637,6 +642,10 @@ def update_route53_records():
                     }
                 })
 
+                if this.dry_run:
+                    eprint("DRY_RUN:  %s -> cloudfront %s\n" % (fqdn, this.cflink[fqdn] ))
+                    continue
+
                 # Distribution exists!
                 eprint("  %s -> cloudfront %s\n" % (fqdn, this.cflink[fqdn] ))
                 res = r53.change_resource_record_sets(
@@ -654,8 +663,9 @@ def update_route53_records():
                 # to that distribution
 
 
+                eprint("Skipping DNS for %s - distribution not ready yet\n" % ( fqdn ))
 
-                if this.maintenance_dns:
+                if False: #this.maintenance_dns:
 
                     eprint("  %s -> maintenance (while cloudfront is being set-up)\n" % (fqdn ))
 
@@ -844,6 +854,10 @@ def approve_cert(domain):
     
     zid = zid['Id']
 
+    if this.dry_run: 
+        eprint("DRY_RUN: About to DNS record %s to verify domain %s\n" % ( val['ResourceRecord']['Name'], domain ))
+        return
+
     res = r53.change_resource_record_sets(
         HostedZoneId=zid,
         ChangeBatch={
@@ -865,6 +879,10 @@ def approve_cert(domain):
 
 
 def request_cert(domain):
+
+    if this.dry_run: 
+        eprint("DRY_RUN: Planning request certificate for *.%s\n" % ( domain ))
+        return
 
     acm=boto3.client('acm')
     res = acm.request_certificate(
@@ -965,7 +983,10 @@ def fullfill_api_gateways():
 def main():
     """huhh"""
 
-    # first discover service end-points
+
+    if this.dry_run:
+        eprint('DRY RUN ENGAGED.......\n')
+
     try:
         yaml=read_yaml_config('service-config.yml')
         discover_services(yaml.get('ServiceConfig', yaml.get('serviceconfig')))
@@ -989,7 +1010,7 @@ def main():
 
     update_route53_records()
 
-    validate_distributions(True)
+    validate_distributions()
 
 
     #update_route53_records()
