@@ -1,10 +1,13 @@
 #!/bin/bash
 
+W=`dirname $0`/aws-whitelabel.py
+
+
 while true; do
 
-    ./aws-whitelabel.py
+    $W
 
-    if [ $? = 2 ]; then
+    if [ $? -eq 2 ]; then
         echo
         echo
         echo "Waiting 10 minutes, then will retry"
