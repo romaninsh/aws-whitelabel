@@ -6,21 +6,32 @@ from __future__ import print_function, division, unicode_literals
 
 from pprint import pprint
 import sys
-import os
+import os, re
 from ruamel.yaml import YAML
 from urllib.parse import urlparse
 import json
 import boto3
 
-class bcolors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+if 'NO_COLOR' in os.environ:
+    class bcolors:
+        HEADER = ''
+        OKBLUE = ''
+        OKGREEN = ''
+        WARNING = ''
+        FAIL = 'FAIL:'
+        ENDC = ''
+        BOLD = ''
+        UNDERLINE = ''
+else:
+    class bcolors:
+        HEADER = '\033[95m'
+        OKBLUE = '\033[94m'
+        OKGREEN = '\033[92m'
+        WARNING = '\033[93m'
+        FAIL = '\033[91m'
+        ENDC = '\033[0m'
+        BOLD = '\033[1m'
+        UNDERLINE = '\033[4m'
 
 this = sys.modules[__name__]
 
@@ -30,9 +41,25 @@ this.services = {}
 # Will be set to client Yaml
 this.clients = {}
 
+# Will store cloud formation cache to we can look it up when doing DNS
 this.cfcache = {}
 
+# Links CF with domains
 this.cflink = {}
+
+this.zonecache = {}
+
+this.certs = {}
+
+this.acm_arns = {}
+
+# Will be set to true, if additional execution is required
+this.rerun = False
+
+this.log_bucket = os.environ['LOG_BUCKET']+".s3.amazonaws.com"
+
+this.dry_run = 'DRY_RUN' in os.environ and os.environ['DRY_RUN']
+
 
 # This will be set to DNS name, which we will use as CNAME
 # destination 
@@ -41,20 +68,17 @@ this.maintenance_dns = "maintenance.romdev4.infrastructure.mymedsleuth.com"
 # Set this to the Route53 Zone if you wish to
 # create all domain names there (for testing) instead
 # of using corresponding client zones
-this.sandbox = ""
-this.sandbox_dot = ""
+#
+# e.g. "mytestzone.net"
+this.sandbox = os.environ['DNS_SANDBOX'] if 'DNS_SANDBOX' in os.environ else None
 
+# Adds dot to sandbox, e.g. ".mytestzone.net"
+this.sandbox_dot = ("." + this.sandbox) if this.sandbox else ""
+
+# If sandbox is set, it will search for appropriate Route53 zone
 this.sandbox_zone = None
 
-this.zonecache = {}
 
-this.certs = {}
-
-this.acm_arns = {}
-
-this.log_bucket = os.environ['LOG_BUCKET']+".s3.amazonaws.com"
-
-this.dry_run = 'DRY_RUN' in os.environ and os.environ['DRY_RUN']
 
 #"ms-qa-logs.s3.amazonaws.com"
 
@@ -235,7 +259,7 @@ def get_expected_origin(domain, subdomain):
         return origin
 
     if service_parsed.scheme == 'http' or service_parsed.scheme == 'https':
-        origin['DomainName']=service_parsed.netloc+this.sandbox
+        origin['DomainName']=service_parsed.netloc
         origin['Id']='MyOrigin'
         origin['OriginPath'] = service_parsed.path
         origin['CustomOriginConfig'] = {
@@ -273,17 +297,18 @@ def validate_distributions():
         # TODO - if delete, then find all matching distributions and schedule them
         # for deletion
 
-        eprint("--[ Validating Distributions for: %s ]---------------\n" % domain)
+        eprint("--[ Validating Distributions for: %s ]---------------\n" % (domain + sandbox_dot))
 
         subdomains=list(this.clients[domain].items())
 
         if 'www' in this.clients[domain] and 'redirect' in this.services:
-            print("Found subdomain 'www', will also create 'redirect' to it from %s" % domain);
+            print("Found subdomain 'www', will also create 'redirect' to it from %s" % (domain + sandbox_dot));
             subdomains.append([False, {'service': 'redirect'}])
 
         for subdomain, client in subdomains:
 
             fqdn = subdomain + "." + domain if subdomain is not False else domain
+            fqdn = fqdn+this.sandbox_dot
 
             existing = 0
 
@@ -316,8 +341,9 @@ def validate_distributions():
                     if cf['Status'] != 'Deployed':
                         eprint("Found update-able distribution but cannot update, Status=%s\n" % cf['Status'])
                         eprint("  %s -> %s -> %s\n" % (fqdn, cfdns, cf['DomainNameDst']))
-                        eprint("old: ", json.dumps(cf['Origin'], sort_keys=True), "\n")
-                        eprint("new: ", json.dumps(cf_new, sort_keys=True), "\n")
+                        #eprint("old: ", json.dumps(cf['Origin'], sort_keys=True), "\n")
+                        #eprint("new: ", json.dumps(cf_new, sort_keys=True), "\n")
+                        this.rerun = True
 
                         existing = -1
                         break
@@ -332,6 +358,8 @@ def validate_distributions():
                         continue
 
                     eprint("Updating distribution: %s -> %s -> %s\n" % (fqdn, cfdns, cf['DomainNameDst']))
+                    # will have to re-run DNS after
+                    this.rerun = True
 
                     if schema == 's3': 
                         create_distribution_s3(domain, subdomain, cf['Id'])
@@ -355,6 +383,7 @@ def validate_distributions():
 
             eprint("Creating new distribution %s -> %s\n" % (fqdn, this.services[client['service']] ))
 
+            this.rerun = True
 
             if schema == 's3': 
                 create_distribution_s3(domain, subdomain)
@@ -573,10 +602,33 @@ def update_route53_records():
         eprint("--[ Processing DNS for %s ]---------------\n" % domain)
 
 
-        zid = r53.list_hosted_zones_by_name(
-            DNSName=domain,
-            MaxItems="1"
-        )['HostedZones'][0]['Id']
+        #zid = r53.list_hosted_zones_by_name(
+            #DNSName=domain,
+            #MaxItems="1"
+        #)['HostedZones'][0]['Id']
+
+
+        zone_domain = domain + this.sandbox_dot;
+
+        while zone_domain:
+
+            zid = r53.list_hosted_zones_by_name(
+                DNSName=zone_domain,
+                MaxItems="1"
+            )['HostedZones'][0]
+
+            if zid['Name'][:-1] == zone_domain: break
+
+            # chop off the domain
+            zone_domain = re.sub('^[^\.]*\.?', '', zone_domain)
+
+        if zid['Name'][:-1] == zone_domain: 
+
+            zid = zid['Id']
+
+
+
+
 
         eprint("  ZoneID: %s\n" % zid)
 
@@ -596,21 +648,20 @@ def update_route53_records():
         subdomains=list(this.clients[domain].items())
 
         if 'www' in this.clients[domain] and 'redirect' in this.services:
-            print("Found subdomain 'www', will also create DNS @ for 'redirect' on %s" % domain);
+            print("Found subdomain 'www', will also create DNS @ for 'redirect' on %s" % (domain+this.sandbox_dot));
             subdomains.append([False, {'service': 'redirect'}])
 
         for subdomain, cl in subdomains:
 
             name = subdomain
 
-            nn = subdomain+'.'+domain+'.'+this.sandbox if subdomain is not False else domain+'.'+this.sandbox
+            nn = subdomain+'.'+domain+this.sandbox_dot+'.' if subdomain is not False else domain+this.sandbox_dot+'.'
 
             ## see if record exists, and we have maintenance dns
             fqdn=subdomain+'.'+domain if subdomain is not False else domain
+            fqdn = fqdn+this.sandbox_dot
 
             if fqdn in this.cflink:
-
-
 
                 actions = []
                 if nn in this.zonecache[zid]:
@@ -642,6 +693,8 @@ def update_route53_records():
                     }
                 })
 
+                pprint(actions)
+
                 if this.dry_run:
                     eprint("DRY_RUN:  %s -> cloudfront %s\n" % (fqdn, this.cflink[fqdn] ))
                     continue
@@ -655,41 +708,9 @@ def update_route53_records():
                     }
                 )
 
-
-            elif nn not in this.zonecache[zid]:
-                # Create maintenance record (temporarily)
-
-                # TODO - if distribution exists for this domain and is configured correctly, we should update DNS
-                # to that distribution
-
-
-                eprint("Skipping DNS for %s - distribution not ready yet\n" % ( fqdn ))
-
-                if False: #this.maintenance_dns:
-
-                    eprint("  %s -> maintenance (while cloudfront is being set-up)\n" % (fqdn ))
-
-
-                    res = r53.change_resource_record_sets(
-                        HostedZoneId=zid,
-                        ChangeBatch={
-                            'Changes': [ { 
-                                'Action': 'CREATE',
-                                'ResourceRecordSet': {
-                                    'Name': nn,
-                                    'Type': 'CNAME',
-                                    'TTL': 300,
-                                    'ResourceRecords': [ {
-                                        'Value': this.maintenance_dns
-                                    } ]
-                                }
-                            } ]
-                        }
-                    )
-
-    
-    #.describe_load_balancers(
-    #client.list_hosted_zones_by_name
+            else:
+                eprint("Skipping DNS for %s - distribution not ready yet\n" % ( fqdn + this.sandbox_dot ))
+                this.rerun = True
 
 def request_certificates():
     """
@@ -734,7 +755,7 @@ def request_certificates():
                 has_all_certs = False
                 break
 
-            this.acm_arns[subdomain+'.'+domain]=arn
+            this.acm_arns[subdomain+'.'+domain+this.sandbox_dot]=arn
 
 
         if has_all_certs:
@@ -743,16 +764,20 @@ def request_certificates():
             if arn is None:
                 has_all_certs = False
             else:
-                this.acm_arns[domain]=arn
+                this.acm_arns[domain+sandbox_dot]=arn
 
         if not has_all_certs:
 
-            failprint("%s missing SSL certs. Maybe next time\n" % domain)
+            eprint("Missing SSL for %s. Must retry\n" % (domain + this.sandbox_dot))
+            this.rerun = True
             this.clients[domain]=None
 
 
 def get_cert_arn(domain, subdomain):
     # attempt to find good ARN for this subdomain
+
+    if this.sandbox:
+        domain = domain + sandbox_dot
 
 
     acm=boto3.client('acm', region_name='us-east-1')
@@ -785,13 +810,13 @@ def get_cert_arn(domain, subdomain):
         if this.certs[domain]['Status'] == 'ISSUED' and subdomain is not None:
             if '*.'+domain in this.certs[domain]['SubjectAlternativeNames']:
                 # can use this ARN
-                print('%s.%s found wildcard %s' % (subdomain, domain, this.certs[domain]['CertificateArn']));
+                #print('%s.%s found wildcard %s' % (subdomain, domain, this.certs[domain]['CertificateArn']));
 
                 return this.certs[domain]['CertificateArn']
 
             if subdomain+'.'+domain in this.certs[domain]['SubjectAlternativeNames']:
                 # can use this ARN
-                print('%s.%s found as alternative name for %s' % (subdomain, domain, this.certs[domain]['CertificateArn']));
+                #print('%s.%s found as alternative name for %s' % (subdomain, domain, this.certs[domain]['CertificateArn']));
 
                 return this.certs[domain]['CertificateArn']
 
@@ -807,15 +832,14 @@ def get_cert_arn(domain, subdomain):
 
     if subdomain is not None and subdomain+'.'+domain in this.certs:
         if this.certs[fqdn]['Status'] == 'ISSUED':
-            print('%s.%s subdomain found as individual cert %s' % (subdomain, domain, this.certs[fqdn]['CertificateArn']));
+            #print('%s.%s subdomain found as individual cert %s' % (subdomain, domain, this.certs[fqdn]['CertificateArn']));
             return this.certs[fqdn]['CertificateArn']
 
     if subdomain is None and domain in this.certs:
         if this.certs[domain]['Status'] == 'ISSUED':
-            print('%s found as individual cert %s' % (domain, this.certs[domain]['CertificateArn']));
+            #print('%s found as individual cert %s' % (domain, this.certs[domain]['CertificateArn']));
             return this.certs[domain]['CertificateArn']
 
-    failprint('No suitable certificate for %s. Requesting.\n' % fqdn)
     request_cert(domain)
 
     return None
@@ -838,19 +862,34 @@ def approve_cert(domain):
     val=this.certs[domain]['DomainValidationOptions'][0]
     if 'ResourceRecord' not in val:
         pprint(this.certs[domain])
-        failprint("ResourceRecord is not provided for certificate (%s). Maybe it must be verified through email?", this.certs[domain]['CertificateArn'])
+        this.rerun=True
+        eprint("ResourceRecord is not provided for certificate (%s). Probably just requested.\n", this.certs[domain]['CertificateArn'])
         return
 
     r53=boto3.client('route53')
 
-    zid = r53.list_hosted_zones_by_name(
-        DNSName=domain,
-        MaxItems="1"
-    )['HostedZones'][0]
+    zid = None
 
-    if zid['Name'][:-1] != domain:
+    zone_domain = domain;
+
+    while zone_domain:
+
+        zid = r53.list_hosted_zones_by_name(
+            DNSName=zone_domain,
+            MaxItems="1"
+        )['HostedZones'][0]
+
+        if zid['Name'][:-1] == zone_domain: break
+
+        # chop off the domain
+        zone_domain = re.sub('^[^\.]*\.?', '', zone_domain)
+
+
+    if not zone_domain:
         die ("Zone for domain %s is not in Route53\n" % domain)
-    
+
+    if domain != zone_domain:
+        eprint("Could not find Route53 zone %s so added into %s instead\n" % (domain, zone_domain))
     
     zid = zid['Id']
 
@@ -880,11 +919,13 @@ def approve_cert(domain):
 
 def request_cert(domain):
 
+    eprint('No suitable certificate for %s. Requesting.\n' % domain)
     if this.dry_run: 
         eprint("DRY_RUN: Planning request certificate for *.%s\n" % ( domain ))
         return
 
-    acm=boto3.client('acm')
+
+    acm=boto3.client('acm', region_name='us-east-1')
     res = acm.request_certificate(
         DomainName=domain,
         ValidationMethod='DNS',
@@ -929,6 +970,7 @@ def fullfill_api_gateways():
         for subdomain, client in subdomains:
 
             fqdn = subdomain + "." + domain if subdomain is not False else domain
+            fqdn = fqdn + this.sandbox_dot
 
             existing = 0
 
@@ -978,6 +1020,13 @@ def fullfill_api_gateways():
 
             this.cflink[fqdn] = res['distributionDomainName']
 
+def lookup_sandbox_zone():
+
+    """ 
+    Will go and look for the most appropriate zone for sandbox
+    """
+
+
 
 
 def main():
@@ -1001,8 +1050,10 @@ def main():
         failprint('Problem in client-config.yml file\n')
         raise
 
-    build_distribution_cache()
 
+    lookup_sandbox_zone()
+
+    build_distribution_cache()
 
     request_certificates()
 
@@ -1013,10 +1064,15 @@ def main():
     validate_distributions()
 
 
+
     #update_route53_records()
 
     #discover_services(read_services_config('service-config.yml'))
 
 
-    eprint('ALL DONE\n')
+    if this.rerun:
+        eprint('ALL DONE BUT MUST RE-RUN IN 5 MINUTES!!\n')
+        sys.exit(2)
+    else:
+        eprint('ALL DONE\n')
 
