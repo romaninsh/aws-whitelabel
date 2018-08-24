@@ -447,6 +447,16 @@ def create_distribution_s3(domain, subdomain, distribution_id=None):
                 'Compress': True,
                 'ViewerProtocolPolicy': 'allow-all',
             },
+            'CustomErrorResponses': {
+                'Quantity': 1,
+                'Items': [
+                    {
+                        'ErrorCode': 404,
+                        'ResponsePagePath': '/index.html',
+                        'ResponseCode': 200,
+                    }
+                ]
+            },
             'Logging': {
                 'Enabled': True,
                 'Bucket': this.log_bucket,
