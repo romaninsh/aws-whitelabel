@@ -1081,7 +1081,7 @@ def main():
 
 
     if this.rerun:
-        eprint('ALL DONE BUT MUST RE-RUN IN 5 MINUTES!!\n')
+        eprint('ALL DONE BUT MUST RE-RUN!!\n')
         sys.exit(2)
     else:
         eprint('ALL DONE\n')

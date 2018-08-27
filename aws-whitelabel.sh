@@ -16,8 +16,8 @@ while true; do
 
         echo
         echo
-        echo "Waiting 5 minutes, then will retry"
-        sleep 300
+        echo "Waiting 1 minute, then will retry"
+        sleep 60
 
     else
         exit $ret
