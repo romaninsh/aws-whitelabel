@@ -644,9 +644,11 @@ def update_route53_records():
 
         # Fetch existing records, unless we have listed this zone already
         if zid not in this.zonecache:
-            recs = r53.list_resource_record_sets(
-                HostedZoneId=zid
-            )['ResourceRecordSets']
+            recs = [];
+            for pag in r53.get_paginator('list_resource_record_sets').paginate(
+                        HostedZoneId=zid
+                    ):
+                recs = recs + pag['ResourceRecordSets']
 
             this.zonecache[zid] = {}
             for r in recs:
