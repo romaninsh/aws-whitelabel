@@ -16,7 +16,7 @@ while true; do
 
         echo
         echo
-        echo "Waiting 10 minutes, then will retry"
+        echo "Waiting 5 minutes, then will retry"
         sleep 300
 
     else
