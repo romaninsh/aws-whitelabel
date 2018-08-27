@@ -184,11 +184,11 @@ def discover_clients(defs):
        # if 'delete' in client:
             # client is due for deletion, but ignore that for now
         
-        this.clients[client['domain']] = {}
+        this.clients[client['domain'].lower()] = {}
 
         for subdomain in client['subdomains']:
 
-            this.clients[client['domain']][subdomain['name']] = subdomain
+            this.clients[client['domain'].lower()][subdomain['name'].lower()] = subdomain
 
 
 def build_distribution_cache():
@@ -787,6 +787,7 @@ def request_certificates():
 
 def get_cert_arn(domain, subdomain):
     # attempt to find good ARN for this subdomain
+
 
     if this.sandbox:
         domain = domain + sandbox_dot
