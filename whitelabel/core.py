@@ -453,7 +453,7 @@ def create_distribution_s3(domain, subdomain, distribution_id=None):
                     {
                         'ErrorCode': 404,
                         'ResponsePagePath': '/index.html',
-                        'ResponseCode': 200,
+                        'ResponseCode': '200',
                     }
                 ]
             },
@@ -1085,4 +1085,5 @@ def main():
         sys.exit(2)
     else:
         eprint('ALL DONE\n')
+        sys.exit(0)
 
