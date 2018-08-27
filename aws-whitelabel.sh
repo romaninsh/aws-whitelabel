@@ -7,8 +7,10 @@ while true; do
 
     $W
 
+    ret=$?
 
-    if [ $? -eq 2 ]; then
+
+    if [ $ret -eq 2 ]; then
 
         [ "$DRY_RUN" ] && exit
 
@@ -18,6 +20,6 @@ while true; do
         sleep 300
 
     else
-        exit $?
+        exit $ret
     fi
 done
