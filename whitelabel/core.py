@@ -737,19 +737,23 @@ def request_certificates():
     acm=boto3.client('acm', region_name='us-east-1')
     eprint("==[ Fetching ACM data ]==============\n")
 
-    valid_certs = acm.list_certificates(CertificateStatuses=['ISSUED'])['CertificateSummaryList']
-    for cert in valid_certs:
-        this.certs[cert['DomainName']] = {
-            'CertificateArn': cert['CertificateArn'],
-            'Status': 'ISSUED'
-        }
+    paginator = acm.get_paginator('list_certificates')
+    iterator = paginator.paginate(CertificateStatuses=['ISSUED'])
 
-    pending_certs = acm.list_certificates(CertificateStatuses=['PENDING_VALIDATION'])['CertificateSummaryList']
-    for cert in pending_certs:
-        this.certs[cert['DomainName']] = {
-            'CertificateArn': cert['CertificateArn'],
-            'Status': 'PENDING_VALIDATION'
-        }
+    for page in iterator:
+        for cert in page['CertificateSummaryList']:
+            this.certs[cert['DomainName']] = {
+                'CertificateArn': cert['CertificateArn'],
+                'Status': 'ISSUED'
+            }
+
+    iterator = paginator.paginate(CertificateStatuses=['PENDING_VALIDATION'])
+    for page in iterator:
+        for cert in page['CertificateSummaryList']:
+            this.certs[cert['DomainName']] = {
+                'CertificateArn': cert['CertificateArn'],
+                'Status': 'PENDING_VALIDATION'
+            }
 
     # See if we need to any new certificates for the clients
     for domain in this.clients:
