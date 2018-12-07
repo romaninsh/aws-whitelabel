@@ -203,30 +203,30 @@ def build_distribution_cache():
     this.cfcache = {}
 
     for page in pag:
-      res = page['DistributionList']['Items']
+        # Check if there are any current distributions.
+        if 'Items' in page['DistributionList']:
+          res = page['DistributionList']['Items']
 
+          for res1 in res:
+            if 'Items' not in res1['Aliases']:
+                continue
 
-      for res1 in res:
+            #if len(res1['Origins']) < 1:
+                #continue
 
-        if 'Items' not in res1['Aliases']:
-            continue
+            # Here lets calculate if the distribution is configured correctly or needs change
 
-        #if len(res1['Origins']) < 1:
-            #continue
+            this.cfcache[res1['DomainName']] = {
+                'Id': res1['Id'],
+                'Alias': res1['Aliases']['Items'][0],
+                'Status': res1['Status'],
+                'DomainNameSrc': res1['DomainName'],
+                'DomainNameDst': res1['Origins']['Items'][0]['DomainName'],
+                'Origin': res1['Origins']['Items'][0],
+                'ViewerCertificate': res1['ViewerCertificate'],
+            }
 
-        # Here lets calculate if the distribution is configured correctly or needs change
-
-        this.cfcache[res1['DomainName']] = {
-            'Id': res1['Id'],
-            'Alias': res1['Aliases']['Items'][0],
-            'Status': res1['Status'],
-            'DomainNameSrc': res1['DomainName'],
-            'DomainNameDst': res1['Origins']['Items'][0]['DomainName'],
-            'Origin': res1['Origins']['Items'][0],
-            'ViewerCertificate': res1['ViewerCertificate'],
-        }
-
-        this.cflink[res1['Aliases']['Items'][0]] = res1['DomainName']
+            this.cflink[res1['Aliases']['Items'][0]] = res1['DomainName']
 
 def get_expected_origin(domain, subdomain):
     """
