@@ -470,6 +470,7 @@ def create_distribution_s3(domain, subdomain, distribution_id=None):
         'ACMCertificateArn': this.acm_arns[fqdn],
         'CloudFrontDefaultCertificate': False,
         'SSLSupportMethod': 'sni-only',
+        'MinimumProtocolVersion': 'TLSv1.2_2018',
     }
 
     if distribution_id:
@@ -541,6 +542,7 @@ def create_distribution_custom(domain, subdomain, distribution_id=None):
         'ACMCertificateArn': this.acm_arns[fqdn],
         'CloudFrontDefaultCertificate': False,
         'SSLSupportMethod': 'sni-only',
+        'MinimumProtocolVersion': 'TLSv1.2_2018',
     }
 
     if distribution_id:
@@ -579,7 +581,7 @@ def update_route53_records():
                                   'Status': 'Deployed',
                                   'ViewerCertificate': {'CertificateSource': 'cloudfront',
                                                         'CloudFrontDefaultCertificate': True,
-                                                        'MinimumProtocolVersion': 'TLSv1'}}}
+                                                        'MinimumProtocolVersion': 'TLSv1.2_2018'}}}
 
     Finally the Dst domain is one of our service end-point.
 
@@ -974,7 +976,6 @@ def fullfill_api_gateways():
 
     apigw = boto3.client('apigateway');
 
-
     for domain in this.clients:
 
         if this.clients[domain] is None: continue
@@ -985,7 +986,6 @@ def fullfill_api_gateways():
         subdomains=list(this.clients[domain].items())
 
         for subdomain, client in subdomains:
-
             fqdn = subdomain + "." + domain if subdomain is not False else domain
             fqdn = fqdn + this.sandbox_dot
 
