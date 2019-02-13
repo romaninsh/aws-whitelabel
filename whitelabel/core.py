@@ -445,7 +445,7 @@ def create_distribution_s3(domain, subdomain, distribution_id=None):
                     'Items': ['HEAD','GET'],
                 },
                 'Compress': True,
-                'ViewerProtocolPolicy': 'allow-all',
+                'ViewerProtocolPolicy': 'redirect-to-https',
             },
             'CustomErrorResponses': {
                 'Quantity': 1,
