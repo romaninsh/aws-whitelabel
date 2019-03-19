@@ -1005,9 +1005,38 @@ def fullfill_api_gateways():
 
             try:
                 res = apigw.get_domain_name(domainName=fqdn);
-                eprint('exists\n')
+                eprint('exists, ')
+
+                try:
+                    res2 = apigw.get_base_path_mapping(domainName=fqdn, basePath="(none)");
+                    #eprint("yep\nstage=%s" % res2['stage'])
+
+                    if res2['stage'] == stage:
+                        eprint("and mapped correctly to %s\n" % res2['stage'])
+
+                    else:
+                        eprint("but mapped incorrectly\n%s ---> %s.." % (res2['stage'], stage))
+
+                        apigw.delete_base_path_mapping(domainName=fqdn, basePath="(none)");
+                        apigw.create_base_path_mapping(
+                            domainName=fqdn,
+                            basePath='',
+                            restApiId=apiid,
+                            stage=stage
+                        )
+                        eprint("done\n")
+                        
+                except:
+                    eprint('but no mapping. Mapping\n')
+                    apigw.create_base_path_mapping(
+                        domainName=fqdn,
+                        basePath='',
+                        restApiId=apiid,
+                        stage=stage
+                    )
+
             except:
-                eprint('CREATING.. ')
+                eprint('CREATING endpoint and mapping.. ')
 
                 try:
                     res = apigw.create_domain_name(
