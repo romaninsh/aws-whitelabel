@@ -1083,7 +1083,7 @@ def fullfill_api_gateways():
                         
                 except:
                     if this.dry_run:
-                        eprint("DRY RUN: no mapping. Will add!\n")"
+                        eprint("DRY RUN: no mapping. Will add!\n")
                         continue
 
                     eprint('but no mapping. Mapping\n')
