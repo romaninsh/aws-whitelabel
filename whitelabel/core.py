@@ -485,7 +485,7 @@ def create_distribution_s3(domain, subdomain, distribution_id=None, redirect_lam
                 'ForwardedValues': { 
                     'QueryString': False,
                     "Headers": {
-                        "Quantity": 1,
+                        "Quantity": 5,
                         'Items': ['Host','CloudFront-Is-Desktop-Viewer','CloudFront-Is-Mobile-Viewer','CloudFront-Is-SmartTV-Viewer','CloudFront-Is-Tablet-Viewer']
                     },
                     'Cookies': { 'Forward': 'none' },
