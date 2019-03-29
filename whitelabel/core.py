@@ -485,8 +485,8 @@ def create_distribution_s3(domain, subdomain, distribution_id=None, redirect_lam
                 'ForwardedValues': { 
                     'QueryString': False,
                     "Headers": {
-                        "Quantity": 0,
-                        'Items': []
+                        "Quantity": 1,
+                        'Items': ['Host']
                     },
                     'Cookies': { 'Forward': 'none' },
                 },
