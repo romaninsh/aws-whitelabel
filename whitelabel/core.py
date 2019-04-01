@@ -2,8 +2,6 @@
 
 # from . import helpers
 
-from __future__ import print_function, division, unicode_literals
-
 from pprint import pprint
 import sys
 import os, re
@@ -79,18 +77,18 @@ this.sandbox_dot = ("." + this.sandbox) if this.sandbox else ""
 this.sandbox_zone = None
 
 
-
-#"ms-qa-logs.s3.amazonaws.com"
-
 def eprint(*args, **kwargs):
     print(bcolors.WARNING, *args, bcolors.ENDC, end="", sep='', **kwargs)
+
 
 def failprint(*args, **kwargs):
     print(bcolors.FAIL, *args, bcolors.ENDC, file=sys.stderr, end="", sep='', **kwargs)
 
+
 def die(*args, **kwargs):
     failprint(*args, **kwargs)
     sys.exit(2)
+
 
 def read_yaml_config(f):
     """
@@ -99,6 +97,7 @@ def read_yaml_config(f):
 
     yaml=YAML(typ='safe')
     return yaml.load(open(f, 'r'))
+
 
 def discover_services(defs):
     """
@@ -166,6 +165,26 @@ def discover_services(defs):
             this.services[service['name']] = url
             continue
 
+        if 'lambda-arn' in service:
+            eprint("%s (lambda-arn %s): " % (service['name'], service['lambda-arn']))
+
+            stack,output = service['lambda-arn'].split(':')
+
+            l = boto3.client('cloudformation').describe_stacks(
+                StackName=stack
+            )
+
+
+            l = l['Stacks'][0]['Outputs']
+            arn = ([item for item in l if item['OutputKey'] == output][0]['OutputValue'])
+
+            this.services[service['name']] = arn
+
+
+            eprint("%s\n" % arn)
+            continue
+
+
         die("Incorrect service definition: ", pprint(service))
 
 
@@ -228,6 +247,7 @@ def build_distribution_cache():
 
             this.cflink[res1['Aliases']['Items'][0]] = res1['DomainName']
 
+
 def get_expected_origin(domain, subdomain):
     """
     Given the subdomain definition, figure out how the distribution origin record would
@@ -281,6 +301,7 @@ def get_expected_origin(domain, subdomain):
         return origin
 
     die("Don't know how to convert %s to Origin config" % service)
+
 
 def validate_distributions():
 
@@ -348,10 +369,8 @@ def validate_distributions():
                         existing = -1
                         break
 
-
-
-                    #eprint("old: ", json.dumps(cf['Origin'], sort_keys=True), "\n")
-                    #eprint("new: ", json.dumps(cf_new, sort_keys=True), "\n")
+                    # eprint("old: ", json.dumps(cf['Origin'], sort_keys=True), "\n")
+                    # eprint("new: ", json.dumps(cf_new, sort_keys=True), "\n")
 
                     if this.dry_run: 
                         eprint("DRY_RUN: Planning to update distribution %s -> %s -> %s\n" % (fqdn, cfdns, cf['DomainNameDst'] ))
@@ -361,10 +380,16 @@ def validate_distributions():
                     # will have to re-run DNS after
                     this.rerun = True
 
-                    if schema == 's3': 
-                        create_distribution_s3(domain, subdomain, cf['Id'])
+                    if 'redirectMobileB3' in client and 'redirectMobileB3' in this.services:
+                        # should enable redirect lambda
+                        redirect_lambda = this.services['redirectMobileB3']
                     else:
-                        create_distribution_custom(domain, subdomain, cf['Id'])
+                        redirect_lambda = None
+
+                    if schema == 's3': 
+                        create_distribution_s3(domain, subdomain, cf['Id'], redirect_lambda=redirect_lambda)
+                    else:
+                        create_distribution_custom(domain, subdomain, cf['Id'], redirect_lambda=redirect_lambda)
 
                     # TODO: update distribution here to match, but in case there are multiple distributions,
                     # delete them
@@ -385,10 +410,18 @@ def validate_distributions():
 
             this.rerun = True
 
-            if schema == 's3': 
-                create_distribution_s3(domain, subdomain)
+            if 'redirectMobileB3' in client and 'redirectMobileB3' in this.services:
+                # should enable redirect lambda
+                redirect_lambda = this.services['redirectMobileB3']
             else:
-                create_distribution_custom(domain, subdomain)
+                redirect_lambda = None
+
+
+            if schema == 's3': 
+                create_distribution_s3(domain, subdomain, redirect_lambda=redirect_lambda)
+            else:
+                create_distribution_custom(domain, subdomain, redirect_lambda=redirect_lambda)
+
 
 def list_merge(existing, new):
 
@@ -396,6 +429,7 @@ def list_merge(existing, new):
         return [dict_merge(existing[0], new[0])]
 
     return new
+
 
 def dict_merge(existing, new):
 
@@ -412,7 +446,23 @@ def dict_merge(existing, new):
 
     return existing
 
-def create_distribution_s3(domain, subdomain, distribution_id=None):
+
+def addLambdaEdge(DistributionConfig, redirect_lambda):
+
+    DistributionConfig['DefaultCacheBehavior']['LambdaFunctionAssociations'] = {
+        'Quantity': 1,
+        'Items': [ {
+            'LambdaFunctionARN': redirect_lambda,
+            'EventType': 'origin-request',
+            'IncludeBody': False
+        } ]
+
+    }
+
+    return DistributionConfig
+
+
+def create_distribution_s3(domain, subdomain, distribution_id=None, redirect_lambda=None):
     """
     Will create CloudFront distribution for a static site. Destination will be calculated
     according to the config.
@@ -435,8 +485,8 @@ def create_distribution_s3(domain, subdomain, distribution_id=None):
                 'ForwardedValues': { 
                     'QueryString': False,
                     "Headers": {
-                        "Quantity": 0,
-                        'Items': []
+                        "Quantity": 5,
+                        'Items': ['Host','CloudFront-Is-Desktop-Viewer','CloudFront-Is-Mobile-Viewer','CloudFront-Is-SmartTV-Viewer','CloudFront-Is-Tablet-Viewer']
                     },
                     'Cookies': { 'Forward': 'none' },
                 },
@@ -464,6 +514,9 @@ def create_distribution_s3(domain, subdomain, distribution_id=None):
                 'IncludeCookies': False,
             }
         }
+
+    if redirect_lambda:
+        DistributionConfig = addLambdaEdge(DistributionConfig, redirect_lambda)
 
     # if ssl
     DistributionConfig['ViewerCertificate']={
@@ -493,7 +546,7 @@ def create_distribution_s3(domain, subdomain, distribution_id=None):
         )
 
 
-def create_distribution_custom(domain, subdomain, distribution_id=None):
+def create_distribution_custom(domain, subdomain, distribution_id=None, redirect_lambda = None):
     """
     Will create CloudFront distribution for a http proxying. Destination will be calculated
     according to the config.
@@ -537,6 +590,9 @@ def create_distribution_custom(domain, subdomain, distribution_id=None):
             }
         }
 
+    if redirect_lambda:
+        DistributionConfig = addLambdaEdge(DistributionConfig, redirect_lambda)
+
     # if ssl
     DistributionConfig['ViewerCertificate']={
         'ACMCertificateArn': this.acm_arns[fqdn],
@@ -564,7 +620,6 @@ def create_distribution_custom(domain, subdomain, distribution_id=None):
         res = cf.create_distribution(
             DistributionConfig=DistributionConfig
         )
-
 
 
 def update_route53_records():
@@ -604,8 +659,6 @@ def update_route53_records():
     2. If any clients must be removed, will remove them
     """
 
-
-
     r53 = boto3.client('route53')
 
     for domain in this.clients:
@@ -618,7 +671,6 @@ def update_route53_records():
             #DNSName=domain,
             #MaxItems="1"
         #)['HostedZones'][0]['Id']
-
 
         zone_domain = domain + this.sandbox_dot;
 
@@ -638,10 +690,6 @@ def update_route53_records():
 
             zid = zid['Id']
 
-
-
-
-
         eprint("  ZoneID: %s\n" % zid)
 
         # Fetch existing records, unless we have listed this zone already
@@ -657,7 +705,6 @@ def update_route53_records():
                 n = r['Name']
                 if (r['Type'] not in ['A', 'CNAME']): continue
                 this.zonecache[zid][r['Name']] = r
-
 
         subdomains=list(this.clients[domain].items())
 
@@ -725,6 +772,7 @@ def update_route53_records():
             else:
                 eprint("Skipping DNS for %s - distribution not ready yet\n" % ( fqdn + this.sandbox_dot ))
                 this.rerun = True
+
 
 def request_certificates():
     """
@@ -863,6 +911,7 @@ def get_cert_arn(domain, subdomain):
 
     return None
 
+
 def approve_cert(domain):
 
     if '_approved' in this.certs[domain]: 
@@ -961,6 +1010,7 @@ def request_cert(domain):
     if cert['Certificate']['Status'] == 'PENDING_VALIDATION':
         approve_cert(domain)
 
+
 def fullfill_api_gateways():
 
     """
@@ -1005,9 +1055,51 @@ def fullfill_api_gateways():
 
             try:
                 res = apigw.get_domain_name(domainName=fqdn);
-                eprint('exists\n')
+                eprint('exists, ')
+
+                try:
+                    res2 = apigw.get_base_path_mapping(domainName=fqdn, basePath="(none)");
+                    #eprint("yep\nstage=%s" % res2['stage'])
+
+                    if res2['stage'] == stage:
+                        eprint("and mapped correctly to %s\n" % res2['stage'])
+
+                    else:
+
+                        if this.dry_run:
+                            eprint("DRY RUN: will fix mapping\n%s ---> %s.." % (res2['stage'], stage))
+                            continue
+
+                        eprint("but mapped incorrectly\n%s ---> %s.." % (res2['stage'], stage))
+
+                        apigw.delete_base_path_mapping(domainName=fqdn, basePath="(none)");
+                        apigw.create_base_path_mapping(
+                            domainName=fqdn,
+                            basePath='',
+                            restApiId=apiid,
+                            stage=stage
+                        )
+                        eprint("done\n")
+                        
+                except:
+                    if this.dry_run:
+                        eprint("DRY RUN: no mapping. Will add!\n")
+                        continue
+
+                    eprint('but no mapping. Mapping\n')
+                    apigw.create_base_path_mapping(
+                        domainName=fqdn,
+                        basePath='',
+                        restApiId=apiid,
+                        stage=stage
+                    )
+
             except:
-                eprint('CREATING.. ')
+                eprint('CREATING endpoint and mapping.. ')
+
+                if this.dry_run:
+                    eprint("DRY RUN: no endpoint. will create..")
+                    continue
 
                 try:
                     res = apigw.create_domain_name(
@@ -1037,13 +1129,12 @@ def fullfill_api_gateways():
 
             this.cflink[fqdn] = res['distributionDomainName']
 
+
 def lookup_sandbox_zone():
 
     """ 
     Will go and look for the most appropriate zone for sandbox
     """
-
-
 
 
 def main():
