@@ -484,10 +484,6 @@ def create_distribution_s3(domain, subdomain, distribution_id=None, redirect_lam
                 'MinTTL': 0,
                 'ForwardedValues': { 
                     'QueryString': False,
-                    "Headers": {
-                        "Quantity": 5,
-                        'Items': ['Host','CloudFront-Is-Desktop-Viewer','CloudFront-Is-Mobile-Viewer','CloudFront-Is-SmartTV-Viewer','CloudFront-Is-Tablet-Viewer']
-                    },
                     'Cookies': { 'Forward': 'none' },
                 },
                 'AllowedMethods': {
@@ -516,7 +512,7 @@ def create_distribution_s3(domain, subdomain, distribution_id=None, redirect_lam
         }
 
     if redirect_lambda:
-        DistributionConfig = addLambdaEdge(DistributionConfig, redirect_lambda)
+        die("Redirect may not be used for S3 / Static pages in %s.%s\n" % (subdomain, domain))
 
     # if ssl
     DistributionConfig['ViewerCertificate']={
