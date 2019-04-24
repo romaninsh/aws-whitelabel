@@ -141,7 +141,3 @@ I've included a simple Maintenance service along with Dockerfile and CloudFormat
 This service will perform redirect from `example.com` to `www.example.com`. I am also including it for your convenience along with Dockerfile and CloudFormation template.
 
 
-
- 
- 
- 
