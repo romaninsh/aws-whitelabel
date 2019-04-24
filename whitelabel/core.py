@@ -59,10 +59,6 @@ this.log_bucket = os.environ['LOG_BUCKET']+".s3.amazonaws.com"
 this.dry_run = 'DRY_RUN' in os.environ and os.environ['DRY_RUN']
 
 
-# This will be set to DNS name, which we will use as CNAME
-# destination 
-this.maintenance_dns = "maintenance.romdev4.infrastructure.mymedsleuth.com"
-
 # Set this to the Route53 Zone if you wish to
 # create all domain names there (for testing) instead
 # of using corresponding client zones
@@ -622,18 +618,8 @@ def update_route53_records():
 
     """
     The logic here is simple. The Route53 points to a temporary DNS provided by cloudfront, such as 
-    dzivs8nzfxo1i.cloudfront.net. This cloudfront distribution has Source and DST domain:
-
-
-    'dzivs8nzfxo1i.cloudfront.net': {'Alias': 'www.legacylivingkidneydonor.org.ms-qa.mymedsleuth.com',
-                                  'DomainNameDst': 'ms-qa-static.s3.amazonaws.com',
-                                  'DomainNameSrc': 'dzivs8nzfxo1i.cloudfront.net',
-                                  'Id': 'E2I4NKMFXV8WTM',
-                                  'Status': 'Deployed',
-                                  'ViewerCertificate': {'CertificateSource': 'cloudfront',
-                                                        'CloudFrontDefaultCertificate': True,
-                                                        'MinimumProtocolVersion': 'TLSv1.2_2018'}}}
-
+    dzivs8nzfxo1i.cloudfront.net. 
+    
     Finally the Dst domain is one of our service end-point.
 
     This method only updates DNS.
